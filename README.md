@@ -21,7 +21,7 @@ Run the scripts **in order**:
 > All data are downloaded automatically. No manual data setup is required.
 
 For convenience, pre-rendered HTML versions of all scripts are included 
-in this repository. These allow inspection of all code, results, and 
+in this repository. These allow inspection of all code, results and 
 figures without re-running the analysis.
 ---
 
