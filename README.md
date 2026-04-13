@@ -29,10 +29,10 @@ figures without re-running the analysis.
 
 tidyverse, lme4, lmerTest, broom.mixed, ggeffects, ggplot2,
 modelsummary, multcomp, emmeans, performance, DHARMa, simr,
-forcats, haven, patchwork, archive
+forcats, haven, patchwork, archive, pandoc
 
 Install all at once:
 install.packages(c("tidyverse", "lme4", "lmerTest", "broom.mixed",
   "ggeffects", "modelsummary", "multcomp", "emmeans", 
-  "performance", "DHARMa", "simr", "haven", "patchwork", "archive"))
+  "performance", "DHARMa", "simr", "haven", "patchwork", "archive", "pandoc"))
 
