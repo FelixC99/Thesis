@@ -1,0 +1,449 @@
+---
+title: "01_data_preparation"
+output: html_document
+date: "2026-02-06"
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r}
+############################################################
+# 0. Load packages and create directories
+############################################################
+
+library(tidyverse)
+library(haven)       # for .dta files
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(patchwork)
+library(ggplot2)
+library(ggeffects)
+library(dplyr)
+
+# Create processed-data directory if needed
+dir.create("data_processed", showWarnings = FALSE)
+
+```
+
+```{r}
+############################################################
+# 1. TRUSTWORTHINESS RATINGS (Trust_1)
+############################################################
+
+# 1.1 Load raw data
+trust <- read_dta("data_raw/trustworthiness_rating.dta")
+
+# Optional: save raw imported file as CSV for inspection
+write.csv(
+  trust,
+  "data_processed/trustworthiness_rating_raw.csv",
+  row.names = FALSE
+)
+
+# 1.2 Filter: users of Facebook, Instagram, or Twitter
+trust_fb_ig_tw <- trust %>%
+  filter(
+    grepl("(^1$|^1,|,1,|,1$)", social_media) |
+    grepl("(^2$|^2,|,2,|,2$)", social_media) |
+    grepl("(^3$|^3,|,3,|,3$)", social_media)
+  )
+
+# 1.3 Data preparation
+trust1 <- trust_fb_ig_tw %>%
+  mutate(
+    # Sharing outcome scaled to 0–1
+    sm = (rating_headlines - 1) / 5,
+
+    # Experimental condition
+    nudge_type = case_when(
+      fc_Rated   == 1 ~ "FactChecker_Rated",
+      fc_Unrated == 1 ~ "Control",
+      lp_Rated   == 1 ~ "Laypeople_Rated",
+      lp_Unrated == 1 ~ "Control",
+      trt        == 1 ~ "Control",
+      TRUE ~ NA_character_
+    ),
+
+    # Unrated conditions are treated as control
+    condition_f = factor(
+      nudge_type,
+      levels = c("Control", "FactChecker_Rated", "Laypeople_Rated")
+    ),
+
+    real_f = factor(
+      ifelse(dummy_true == 1, "Real", "Fake"),
+      levels = c("Fake", "Real")
+    ),
+
+    sex_f = factor(
+      ifelse(Gender == 1, "Male", "Female"),
+      levels = c("Female", "Male")
+    ),
+
+    demrep_f = case_when(
+      DemRep_C %in% 1:3 ~ "Democrat",
+      DemRep_C %in% 4:6 ~ "Republican",
+      TRUE ~ NA_character_
+    ),
+
+    # Shift ID to avoid overlap across datasets
+    id = ID + 3060,
+    headline_id = factor(news_headlines)
+  )
+
+# 1.4 Keep relevant variables
+vars_to_keep_trust <- c(
+  "id", "Age", "sex_f", "condition_f",
+  "demrep_f", "real_f", "headline_id", "sm"
+)
+
+df_trust_1 <- trust1[, vars_to_keep_trust]
+df_trust_1$Experiment <- "Trust_1"
+
+# 1.5 Save cleaned dataset
+write.csv(
+  df_trust_1,
+  "data_processed/df_trust_1.csv",
+  row.names = FALSE
+)
+```
+
+
+```{r}
+############################################################
+# 2. ACCURACY NUDGES (Accuracy_1)
+############################################################
+
+# 2.1 Load datasets
+s3 <- readr::read_csv("data_raw/Study_3_data.csv") %>%
+  mutate(
+    CRT3_1 = readr::parse_number(as.character(CRT3_1)),
+    study = 3
+  )
+
+s4 <- readr::read_csv("data_raw/Study_4_data.csv") %>%
+  mutate(
+    CRT3_1 = readr::parse_number(as.character(CRT3_1)),
+    study = 4
+  )
+
+s5 <- readr::read_csv("data_raw/Study_5_data.csv") %>%
+  rename(
+    Age = age,
+    Sex = gender
+  ) %>%
+  mutate(
+    CRT3_1 = readr::parse_number(as.character(CRT3_1)),
+    DemRep = case_when(
+      DemRep_C <= 3 ~ 1L,
+      DemRep_C >= 4 ~ 2L,
+      TRUE ~ NA_integer_
+    ),
+    study = 5
+  )
+
+# 2.2 Combine datasets
+dat_raw_acc <- bind_rows(s3, s4, s5)
+
+# 2.3 Apply filtering criteria
+dat_acc <- dat_raw_acc %>%
+  filter(
+    !is.na(SocialMedia_Chk),
+    FB == 1,
+    !is.na(Condition),
+    (study %in% c(3, 4) & Condition %in% c(1, 2)) |
+      (study == 5 & Condition %in% c(1, 3))
+  ) %>%
+  mutate(
+    id = row_number()
+  )
+
+# 2.4 Reshape to long format
+dat_long_acc <- dat_acc %>%
+  pivot_longer(
+    cols = matches("^(Fake|Real)[0-9]+_3$"),
+    names_to = c("truth", "item_num"),
+    names_pattern = "(Fake|Real)([0-9]+)_3",
+    values_to = "sm_raw"
+  ) %>%
+  mutate(
+    item_num = as.integer(item_num),
+    real = if_else(truth == "Real", 1L, 0L),
+    real_f = factor(real, levels = c(0, 1), labels = c("Fake", "Real")),
+
+    # Normalize sharing outcome to 0–1
+    sm = (sm_raw - 1) / 5,
+    Bsm = round(sm),
+
+    # Harmonize treatment coding across studies
+    condition_harmonized = case_when(
+      study %in% c(3, 4) & Condition == 1 ~ "Control",
+      study %in% c(3, 4) & Condition == 2 ~ "Accuracy",
+      study == 5 & Condition == 1 ~ "Control",
+      study == 5 & Condition == 3 ~ "Accuracy",
+      TRUE ~ NA_character_
+    ),
+
+    condition_f = factor(
+      condition_harmonized,
+      levels = c("Control", "Accuracy")
+    ),
+
+    demrep_f = factor(
+      DemRep,
+      levels = c(1, 2),
+      labels = c("Democrat", "Republican")
+    ),
+
+    sex_f = factor(
+      Sex,
+      levels = c(1, 2),
+      labels = c("Male", "Female")
+    ),
+
+    study_f = factor(study),
+    Experiment = paste0("accuracy_", study),
+    headline_id = interaction(study, truth, item_num, drop = TRUE)
+  )
+
+vars_to_keep_acc <- c(
+  "id", "Age", "sex_f", "condition_f",
+  "demrep_f", "real_f", "headline_id", "sm", "Experiment"
+)
+
+df_accuracy_1 <- dat_long_acc[, vars_to_keep_acc]
+
+# 2.5 Save cleaned dataset
+write.csv(
+  df_accuracy_1,
+  "data_processed/df_accuracy_1.csv",
+  row.names = FALSE
+)
+```
+
+
+```{r}
+############################################################
+# 3. FACT-CHECK LABELS (fc_label)
+############################################################
+
+# 3.1 Load raw datasets from multiple studies/platforms
+fc1  <- read.csv("data_raw/connect1_share_meta.csv", as.is = TRUE) %>% mutate(study = "connect1")
+fc2  <- read.csv("data_raw/crmturk1_share_meta.csv", as.is = TRUE) %>% mutate(study = "crmturk1")
+fc3  <- read.csv("data_raw/forthright1_share_meta.csv", as.is = TRUE) %>% mutate(study = "forthright1")
+fc4  <- read.csv("data_raw/lucid1_share_meta.csv", as.is = TRUE) %>% mutate(study = "lucid1")
+fc5  <- read.csv("data_raw/prolific1_share_meta.csv", as.is = TRUE) %>% mutate(study = "prolific1")
+fc6  <- read.csv("data_raw/prolificnr1_share_meta.csv", as.is = TRUE) %>% mutate(study = "prolificnr1")
+fc7  <- read.csv("data_raw/regmturk1_share_meta.csv", as.is = TRUE) %>% mutate(study = "regmturk1")
+fc8  <- read.csv("data_raw/robbmturk1_share_meta.csv", as.is = TRUE) %>% mutate(study = "robbmturk1")
+fc9  <- read.csv("data_raw/Exp1_Share_Meta.csv", as.is = TRUE) %>% mutate(study = "LucidExp1")
+fc10 <- read.csv("data_raw/Exp2_Share_Meta.csv", as.is = TRUE) %>% mutate(study = "LucidExp2")
+fc11 <- read.csv("data_raw/Exp3_Share_Meta.csv", as.is = TRUE) %>% mutate(study = "MTurkExp3")
+
+dat_raw_fc <- rbind(fc1, fc2, fc3, fc4, fc5, fc6, fc7, fc8, fc9, fc10, fc11)
+
+# 3.2 Prepare data
+df_fc_label <- dat_raw_fc %>%
+  transmute(
+    FM_ck = FM_ck,
+    id = as.character(ID),
+    Age = as.numeric(age),
+
+    sex_f = case_when(
+      female == 1 ~ "Female",
+      female == 0 ~ "Male",
+      TRUE ~ NA_character_
+    ),
+
+    condition_f = as.integer(hcondition),
+
+    demrep_f = case_when(
+      as.numeric(politics) <= 3 ~ "Democrat",
+      as.numeric(politics) == 4 ~ "Independent",
+      as.numeric(politics) >= 5 ~ "Republican",
+      TRUE ~ NA_character_
+    ),
+
+    real_f = case_when(
+      condition_f %in% c(1, 2, 3) ~ "Fake",
+      condition_f %in% c(4, 5) ~ "Real",
+      TRUE ~ NA_character_
+    ),
+
+    headline_id = as.character(itemID),
+    sm = as.numeric(share),
+
+    Experiment = paste0("fc_label_", study, "_", platform)
+  ) %>%
+  mutate(
+    sex_f = factor(sex_f),
+    demrep_f = factor(
+      demrep_f,
+      levels = c("Democrat", "Independent", "Republican")
+    )
+  )
+
+# 3.3 Social-media-use filter
+df_fc_label$SM_filter <- ifelse(
+  df_fc_label$FM_ck == TRUE |
+    grepl("^1", df_fc_label$FM_ck) |
+    grepl("^1$", df_fc_label$FM_ck) |
+    grepl("2", df_fc_label$FM_ck) |
+    grepl("4", df_fc_label$FM_ck) |
+    grepl("999", df_fc_label$FM_ck),
+  TRUE, FALSE
+)
+
+df_fc_label1 <- df_fc_label %>%
+  filter(SM_filter == TRUE)
+
+# 3.4 Save cleaned dataset
+write.csv(
+  df_fc_label1,
+  "data_processed/df_fclabel_1.csv",
+  row.names = FALSE
+)
+```
+
+
+```{r}
+length(unique(df_fc_label1$id))
+```
+
+
+
+
+```{r}
+############################################################
+# 4. POOL ALL DATASETS
+############################################################
+
+# 4.1 Load prepared datasets
+df_accuracy <- read_csv("data_processed/df_accuracy_1.csv")
+df_trust    <- read_csv("data_processed/df_trust_1.csv")
+df_fc_label <- read_csv("data_processed/df_fclabel_1.csv")
+
+# 4.2 Harmonize ID and headline types
+df_accuracy <- df_accuracy %>%
+  mutate(
+    headline_id = as.character(headline_id),
+    id = as.character(id)
+  )
+
+df_trust <- df_trust %>%
+  mutate(
+    headline_id = as.character(headline_id),
+    id = as.character(id)
+  )
+
+df_fc_label <- df_fc_label %>%
+  mutate(
+    headline_id = as.character(headline_id),
+    id = as.character(id)
+  )
+
+# 4.3 Create experiment-specific indicators
+df_accuracy <- df_accuracy %>%
+  mutate(
+    experiment_type = "accuracy",
+    accuracy_nudge = if_else(condition_f == "Accuracy", 1L, 0L),
+    rating_shown = 0L,
+    rater_type = NA_character_,
+    label_shown = 0L
+  )
+
+df_trust <- df_trust %>%
+  mutate(
+    experiment_type = "source_rating",
+    accuracy_nudge = 0L,
+    rating_shown = if_else(
+      condition_f %in% c("FactChecker_Rated", "Laypeople_Rated"),
+      1L, 0L
+    ),
+    rater_type = case_when(
+      condition_f == "FactChecker_Rated" ~ "factchecker",
+      condition_f == "Laypeople_Rated" ~ "laypeople",
+      TRUE ~ NA_character_
+    ),
+    label_shown = 0L
+  )
+
+df_fc_label <- df_fc_label %>%
+  mutate(
+    experiment_type = "factcheck_label",
+    accuracy_nudge = 0L,
+    rating_shown = 0L,
+    rater_type = NA_character_,
+    condition_f = as.character(condition_f),
+    label_shown = if_else(condition_f == "2", 1L, 0L)
+  )
+
+# 4.4 Pool all datasets
+df_all <- bind_rows(df_accuracy, df_trust, df_fc_label)
+
+df_all <- df_all %>%
+  mutate(
+    age = as.numeric(Age),
+    gender = factor(sex_f),
+    ideology = factor(demrep_f, levels = c("Democrat", "Independent", "Republican")),
+    veracity = if_else(real_f == "Real", "Real", "Fake"),
+    veracity = factor(veracity),
+    study_id = factor(Experiment),
+    item_id = factor(headline_id),
+    participant_id = factor(id),
+    share_intent = sm
+  ) %>%
+  group_by(study_id) %>%
+  mutate(
+    share_z = as.numeric(scale(sm))
+  ) %>%
+  ungroup()
+
+# 4.5 Save final pooled dataset
+write.csv(
+  df_all,
+  "data_processed/df_all_pooled.csv",
+  row.names = FALSE
+)
+
+############################################################
+# 5. FINAL FILTERING: ANALYTICAL SAMPLE (FALSE HEADLINES)
+############################################################
+
+# This step creates the final analytical sample used for
+# descriptive checks and subsequent regression analyses.
+#
+# Applied restrictions:
+# 1. Keep only respondents in a plausible adult age range (18–75)
+# 2. Restrict the sample to false headlines only
+# 3. Create a standardized age variable for interaction analyses
+# 4. Harmonize gender coding
+
+# Restrict to plausible adult age range
+df_all <- df_all %>%
+  mutate(age = as.numeric(age)) %>%
+  filter(!is.na(age), age >= 18, age <= 75)
+
+# Keep only false headlines and create analysis variables
+df_fake <- df_all %>%
+  filter(veracity == "Fake") %>%
+  mutate(
+    # Standardized age variable used in moderation analyses
+    age_z = as.numeric(scale(age)),
+
+    # Harmonize gender coding across pooled datasets
+    gender = factor(gender, levels = c("Female", "Male"))
+  )
+
+# Save final analytical dataset
+write.csv(
+  df_fake,
+  "data_processed/df_fake.csv",
+  row.names = FALSE
+)
+```
+
