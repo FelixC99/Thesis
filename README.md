@@ -22,7 +22,7 @@ Run the scripts **in order**:
 
 For convenience, pre-rendered HTML versions of all scripts are included 
 in this repository. These allow inspection of all code, results, and 
-figures without re-running the analysis:
+figures without re-running the analysis.
 ---
 
 ## Required R Packages
