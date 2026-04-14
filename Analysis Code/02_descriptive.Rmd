@@ -1,0 +1,345 @@
+---
+title: "02_Descriptive"
+output: html_document
+date: "2026-02-06"
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r}
+############################################################
+# 0. Load Packages
+############################################################
+
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(ggeffects)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+############################################################
+# 1. Load analytical dataset
+############################################################
+
+# The final fake-headline sample is created at the end of
+# the data preparation script and loaded here for descriptive checks.
+
+df_fake <- read_csv("data_processed/df_fake.csv", show_col_types = FALSE)
+
+# Ensure correct variable types
+df_fake <- df_fake %>%
+  mutate(
+    study_id        = factor(study_id),
+    item_id         = factor(item_id),
+    participant_id  = factor(participant_id),
+    experiment_type = factor(experiment_type),
+    gender          = factor(gender),
+    ideology        = factor(ideology),
+    veracity        = factor(veracity),
+    share_z         = as.numeric(share_z),
+    share_intent    = as.numeric(share_intent),
+    age             = as.numeric(age),
+    age_z           = as.numeric(age_z)
+  )
+
+# Optional overall dimensions
+dim(df_fake)
+head(df_fake)
+```
+
+
+```{r}
+############################################################
+# 2. General sample overview
+############################################################
+
+df_fake %>%
+  summarise(
+    observations = n(),
+    participants = n_distinct(participant_id),
+    headlines    = n_distinct(item_id),
+    studies      = n_distinct(study_id)
+  )
+
+df_fake %>%
+  count(experiment_type)
+
+df_fake %>%
+  summarise(
+    mean_age = mean(age, na.rm = TRUE),
+    sd_age   = sd(age, na.rm = TRUE),
+    q1       = quantile(age, 0.25, na.rm = TRUE),
+    q3       = quantile(age, 0.75, na.rm = TRUE),
+    min_age  = min(age, na.rm = TRUE),
+    max_age  = max(age, na.rm = TRUE)
+  )
+
+```
+
+```{r}
+############################################################
+# 3. Missing values
+############################################################
+
+df_fake %>%
+  summarise(
+    n         = n(),
+    na_share  = sum(is.na(share_z)),
+    na_age    = sum(is.na(age)),
+    na_ideo   = sum(is.na(ideology)),
+    na_gender = sum(is.na(gender)),
+    na_verac  = sum(is.na(veracity))
+  )
+
+
+```
+
+
+```{r}
+############################################################
+# 4. Distribution of key variables
+############################################################
+
+# 4.1 Distribution of standardized sharing intentions
+summary(df_fake$share_z)
+
+ggplot(df_fake, aes(x = share_z, fill = experiment_type)) +
+  geom_histogram(alpha = 0.5, bins = 30, position = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of standardized sharing intentions (share_z)",
+    x = "share_z",
+    y = "Frequency"
+  )
+
+# 4.2 Age distribution
+summary(df_fake$age)
+
+ggplot(df_fake, aes(x = age)) +
+  geom_histogram(bins = 30, fill = "darkgreen", alpha = 0.7) +
+  theme_minimal() +
+  labs(
+    title = "Age distribution",
+    x = "Age",
+    y = "Frequency"
+  )
+```
+
+
+```{r}
+############################################################
+# 5. Sample composition by experiment type
+############################################################
+
+# 5.1 Number of observations by experiment type
+df_fake %>%
+  count(experiment_type)
+
+# 5.2 Number of unique participants by experiment type
+df_fake %>%
+  group_by(experiment_type) %>%
+  summarise(
+    participants = n_distinct(participant_id),
+    observations = n(),
+    .groups = "drop"
+  )
+
+# 5.3 Number of unique headlines by study and experiment type
+df_fake %>%
+  group_by(study_id) %>%
+  summarise(unique_headlines = n_distinct(item_id), .groups = "drop")
+
+df_fake %>%
+  group_by(experiment_type) %>%
+  summarise(unique_headlines = n_distinct(item_id), .groups = "drop")
+```
+
+
+```{r}
+############################################################
+# 6. Descriptive statistics by experiment type
+############################################################
+
+desc_fake_exp <- df_fake %>%
+  group_by(experiment_type) %>%
+  summarise(
+    mean_share = mean(share_z, na.rm = TRUE),
+    sd_share   = sd(share_z, na.rm = TRUE),
+    n          = n(),
+    .groups = "drop"
+  )
+
+desc_fake_exp
+
+
+```
+
+
+
+
+```{r}
+############################################################
+# 7. Demographic composition
+############################################################
+
+# 7.1 Ideology distribution
+df_fake %>%
+  count(ideology)
+
+df_fake %>%
+  count(experiment_type, ideology)
+
+# 7.2 Gender distribution
+df_fake %>%
+  count(gender)
+
+df_fake %>%
+  count(experiment_type, gender)
+
+# 7.3 Age by experiment type
+df_fake %>%
+  group_by(experiment_type) %>%
+  summarise(
+    mean_age = mean(age, na.rm = TRUE),
+    sd_age   = sd(age, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+
+```{r}
+############################################################
+# 8. Exploratory descriptive patterns
+############################################################
+
+# 8.1 share_z by experiment type and ideology
+df_fake %>%
+  group_by(experiment_type, ideology) %>%
+  summarise(
+    mean_share = mean(share_z, na.rm = TRUE),
+    sd_share   = sd(share_z, na.rm = TRUE),
+    n          = n(),
+    .groups = "drop"
+  )
+
+# 8.2 Age groups (tertiles) by experiment type
+df_fake <- df_fake %>%
+  mutate(age_group = ntile(age, 3))
+
+df_fake %>%
+  group_by(experiment_type, age_group) %>%
+  summarise(
+    mean_share = mean(share_z, na.rm = TRUE),
+    sd_share   = sd(share_z, na.rm = TRUE),
+    n          = n(),
+    .groups = "drop"
+  )
+
+# 8.3 Plot: mean share_z with 95% CI by experiment type
+df_fake %>%
+  group_by(experiment_type) %>%
+  summarise(
+    mean_share = mean(share_z, na.rm = TRUE),
+    se_share   = sd(share_z, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = experiment_type, y = mean_share)) +
+  geom_point(size = 3) +
+  geom_errorbar(
+    aes(
+      ymin = mean_share - 1.96 * se_share,
+      ymax = mean_share + 1.96 * se_share
+    ),
+    width = 0.1
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Mean share_z (false headlines) by experiment type",
+    x = "Experiment type",
+    y = "Mean share_z"
+  )
+
+```
+
+
+```{r}
+############################################################
+# 9. Intervention coding checks
+############################################################
+
+# These checks verify whether treatment indicators vary where expected.
+
+# 9.1 Accuracy nudge indicator
+table(df_fake$experiment_type, df_fake$accuracy_nudge)
+
+# 9.2 Source-rating indicator
+table(df_fake$experiment_type, df_fake$rating_shown)
+
+# 9.3 Fact-check-label indicator
+table(df_fake$experiment_type, df_fake$label_shown)
+
+
+```
+
+
+```{r}
+############################################################
+# 10. Simple plausibility checks
+############################################################
+
+# 10.1 Correlation between share_z and age
+cor(df_fake$share_z, df_fake$age, use = "pairwise.complete.obs")
+
+# 10.2 Mean share_z by ideology
+df_fake %>%
+  group_by(ideology) %>%
+  summarise(
+    mean_share = mean(share_z, na.rm = TRUE),
+    sd_share   = sd(share_z, na.rm = TRUE),
+    n          = n(),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+############################################################
+# 11. Additional plots for age-standardized distributions
+############################################################
+
+ggplot(df_fake, aes(x = age_z, fill = factor(accuracy_nudge))) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  theme_minimal() +
+  labs(
+    title = "Distribution of age_z by accuracy nudge status",
+    fill = "Accuracy nudge"
+  )
+
+ggplot(df_fake, aes(x = age_z, fill = factor(label_shown))) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  theme_minimal() +
+  labs(
+    title = "Distribution of age_z by fact-check label status",
+    fill = "Label shown"
+  )
+
+ggplot(df_fake, aes(x = age_z, fill = factor(rating_shown))) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  theme_minimal() +
+  labs(
+    title = "Distribution of age_z by source-rating status",
+    fill = "Rating shown"
+  )
+```
+
+
+
+

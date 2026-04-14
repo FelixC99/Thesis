@@ -1,0 +1,158 @@
+
+```{r}
+#install.packages(c("tidyverse", "lme4", "lmerTest", "broom.mixed", "ggeffects", "modelsummary", "multcomp", "emmeans", "osfr", "performance", "DHARMa", "simr", "haven", "patchwork", "archive", "pandoc"))
+
+library(osfr)
+library(archive)
+```
+
+
+```{r}
+# =========================================================
+# Data Download and Preparation Script
+# This script downloads all required datasets from OSF,
+# extracts ZIP archives, and keeps only the relevant files
+# for the empirical analysis.
+# =========================================================
+
+# Create directory for raw data (if it does not already exist)
+dir.create("data_raw", showWarnings = FALSE)
+
+# =========================================================
+# 1. Download individual datasets from OSF
+# =========================================================
+
+files <- list(
+  study3 = list(
+    id   = "sd643",                    # https://osf.io/sd643/
+    dest = "data_raw/Study_3_data.csv"
+  ),
+  study4 = list(
+    id   = "5ta42",                    # https://osf.io/5ta42/
+    dest = "data_raw/Study_4_data.csv"
+  ),
+  study5 = list(
+    id   = "nu3qp",                    # https://osf.io/nu3qp/
+    dest = "data_raw/Study_5_data.csv"
+  ),
+  trustworthiness = list(
+    id   = "39s8a",                    # https://osf.io/39s8a/
+    dest = "data_raw/trustworthiness_rating.dta"
+  )
+)
+
+# Download each file only if it does not already exist locally
+for (f in files) {
+  if (!file.exists(f$dest)) {
+    message(sprintf("Downloading %s to %s ...", f$id, f$dest))
+
+    # Retrieve OSF file object
+    osf_file <- osf_retrieve_file(f$id)
+
+    # Download into data_raw
+    res <- osf_download(
+      osf_file,
+      path      = dirname(f$dest),
+      conflicts = "overwrite",
+      progress  = FALSE,
+      verbose   = FALSE
+    )
+
+    # Local path from osf_download result
+    downloaded_path <- res$local_path[1]
+
+    # Optionally rename to desired filename
+    if (!identical(
+      normalizePath(downloaded_path),
+      normalizePath(f$dest, mustWork = FALSE)
+    )) {
+      file.rename(downloaded_path, f$dest)
+    }
+
+    message(sprintf("Finished: %s", f$dest))
+  } else {
+    message(sprintf("File already exists, skipping: %s", f$dest))
+  }
+}
+
+# =========================================================
+# 2. Download and extract ZIP archive (TFC dataset)
+# =========================================================
+
+zip_id   <- "qwucj"
+zip_path <- "data_raw/TFC_April2023.zip"
+
+if (!file.exists(zip_path)) {
+  message(sprintf("Downloading ZIP %s to %s ...", zip_id, zip_path))
+
+  osf_zip <- osf_retrieve_file(zip_id)
+
+  res_zip <- osf_download(
+    osf_zip,
+    path      = dirname(zip_path),
+    conflicts = "overwrite",
+    progress  = FALSE,
+    verbose   = FALSE
+  )
+
+  downloaded_zip_path <- res_zip$local_path[1]
+
+  if (!identical(
+    normalizePath(downloaded_zip_path),
+    normalizePath(zip_path, mustWork = FALSE)
+  )) {
+    file.rename(downloaded_zip_path, zip_path)
+  }
+
+  message(sprintf("Finished: %s", zip_path))
+} else {
+  message(sprintf("ZIP archive already exists, skipping download: %s", zip_path))
+}
+
+# =========================================================
+# 3. Select only relevant files from extracted archive
+# =========================================================
+
+unzipped_dir <- "data_raw/TFC_April2023"
+
+# Only extract if not already done
+if (!dir.exists(unzipped_dir)) {
+  dir.create(unzipped_dir, showWarnings = FALSE)
+  archive_extract(zip_path, dir = unzipped_dir)
+}
+
+target_path <- "data_raw"
+#Sys.sleep(15)
+# List all files recursively
+all_files <- list.files(unzipped_dir, recursive = TRUE, full.names = TRUE)
+all_files <- all_files[file.info(all_files)$isdir == FALSE]
+
+# Patterns for relevant meta-analysis files
+patterns <- c(
+  "Exp1_Share_Meta\\.csv",
+  "Exp2_Share_Meta\\.csv",
+  "Exp3_Share_Meta\\.csv",
+  "1_Share_Meta\\.csv"
+)
+
+# Filter files that contain one of the patterns
+selected_files <- all_files[
+  grepl(paste(patterns, collapse = "|"), all_files)
+]
+
+# Copy selected files into the main data directory
+for (f in selected_files) {
+  file.copy(f, file.path(target_path, basename(f)), overwrite = TRUE)
+}
+
+# =========================================================
+# 4. Clean up intermediate files
+# =========================================================
+
+#Remove extracted directory
+unlink(unzipped_dir, recursive = TRUE, force = TRUE)
+
+#Remove ZIP archive (if you do not want to keep it)
+unlink(zip_path, force = TRUE)
+```
+
