@@ -33,6 +33,6 @@ forcats, haven, patchwork, archive, pandoc
 
 Install all at once:
 install.packages(c("tidyverse", "lme4", "lmerTest", "broom.mixed",
-  "ggeffects", "modelsummary", "multcomp", "emmeans", 
+  "ggeffects", "modelsummary", "multcomp", "emmeans", "osfr", 
   "performance", "DHARMa", "simr", "haven", "patchwork", "archive", "pandoc"))
 
